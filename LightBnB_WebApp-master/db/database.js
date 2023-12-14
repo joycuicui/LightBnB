@@ -125,20 +125,67 @@ const getAllReservations = function (guest_id, limit = 10) {
  * @return {Promise<[{}]>}  A promise to the properties.
  */
 const getAllProperties = function (options, limit = 10) {
-  // const limitedProperties = {};
-  // for (let i = 1; i <= limit; i++) {
-  //   limitedProperties[i] = properties[i];
-  // }
-  // return Promise.resolve(limitedProperties);
-  return pool
-    .query(`SELECT * FROM properties LIMIT $1;`, [limit])
-    .then((result) => {
-      console.log(result.rows);
-      return result.rows;
-    })
-    .catch((err) => {
-      console.log(err.message);
-    });
+  // Setup an array to hold any parameters that may be available for the query.
+  const queryParams = [];
+
+  // Start the query with all information that comes before the WHERE clause.
+  let queryString = `
+  SELECT properties.*, avg(property_reviews.rating) as average_rating
+  FROM properties
+  JOIN property_reviews ON properties.id = property_id
+ `;
+
+  // Check if a city has been passed in as an option. Add the city to the params array and create a WHERE clause for the city.
+  if (options.city) {
+    // The % syntax for the LIKE clause must be part of the parameter, not the query.
+    queryParams.push(`%${options.city}%`);
+    // We can use the length of the array to dynamically get the $n placeholder number. Since this is the first parameter, it will be $1.
+    queryString += `WHERE city LIKE $${queryParams.length}`;
+  }
+
+  if (options.owner_id) {
+    queryParams.push(options.owner_id);
+    if (queryParams.length === 1) {
+      queryString += `WHERE owner_id = $${queryParams.length}`;
+    } else {
+      queryString += `AND owner_id = $${queryParams.length}`;
+    }
+  }
+
+  if (options.minimum_price_per_night && options.maximum_price_per_night) {
+    queryParams.push(
+      options.minimum_price_per_night * 100,
+      options.maximum_price_per_night * 100
+    );
+    if (queryParams.length === 2) {
+      queryString += `WHERE cost_per_night BETWEEN $${
+        queryParams.length - 1
+      } AND $${queryParams.length}`;
+    } else {
+      queryString += `AND cost_per_night BETWEEN $${
+        queryParams.length - 1
+      } AND $${queryParams.length}`;
+    }
+  }
+
+  // Add any query that comes after the WHERE clause.
+  queryString += `GROUP BY properties.id`;
+
+  if (options.minimum_rating) {
+    queryParams.push(options.minimum_rating);
+    queryString += `HAVING avg(property_reviews.rating) >= $${queryParams.length}`;
+  }
+
+  // Add any query that comes after the HAVING clause.
+  queryParams.push(limit);
+  queryString += `
+  ORDER BY cost_per_night
+  LIMIT $${queryParams.length}`;
+
+  console.log("queryString:", queryString);
+  console.log("queryParams:", queryParams);
+
+  return pool.query(queryString, queryParams).then((res) => res.rows);
 };
 
 /**
